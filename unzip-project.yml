@@ -1,0 +1,54 @@
+name: Extract uploaded website ZIP
+
+on:
+  push:
+    paths:
+      - 'website_under_24MB.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Extract project files safely
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import stat
+
+          archive = Path('website_under_24MB.zip')
+          if not archive.is_file():
+              raise SystemExit('Upload website_under_24MB.zip into the repository root first.')
+          base = Path.cwd().resolve()
+          with ZipFile(archive) as z:
+              for info in z.infolist():
+                  entry = Path(info.filename)
+                  if (entry.is_absolute() or '..' in entry.parts or
+                      info.filename.startswith('\\') or ':' in entry.parts[0] or
+                      (info.external_attr >> 16) & 0o170000 == stat.S_IFLNK):
+                      raise SystemExit(f'Unsafe entry: {info.filename}')
+                  dest = (base / entry).resolve()
+                  if not dest.is_relative_to(base):
+                      raise SystemExit(f'Unsafe destination: {info.filename}')
+              z.extractall(base)
+          archive.unlink()
+          PY
+
+      - name: Commit extracted project
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Import project files from uploaded ZIP"
+            git push
+          fi
